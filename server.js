@@ -71,18 +71,39 @@ app.get('/', (req, res) => {
 
 // --- WEBSOCKET LOGIC (For Website Clients) ---
 
-wss.on('connection', (ws) => {
-    console.log('[WS] New client connected');
-
-    // 1. Immediately send the current song to the new user
-    // This ensures they don't have to wait for the next song to start
-    if (currentState.action === 'play') {
-        ws.send(JSON.stringify(currentState));
+wss.on("connection", (socket) => {
+  socket.on("message", (raw) => {
+    let data;
+    try {
+      data = JSON.parse(raw.toString());
+    } catch {
+      return;
     }
 
-    ws.on('close', () => {
-        console.log('[WS] Client disconnected');
-    });
+    // allow plugin-triggered playback
+    if (data.action === "play" && typeof data.url === "string") {
+      const msg = JSON.stringify({
+        action: "play",
+        url: data.url,
+        text: typeof data.text === "string" ? data.text : "Now playing"
+      });
+
+      for (const client of wss.clients) {
+        if (client.readyState === 1) {
+          client.send(msg);
+        }
+      }
+    }
+
+    if (data.action === "stop") {
+      const msg = JSON.stringify({ action: "stop" });
+      for (const client of wss.clients) {
+        if (client.readyState === 1) {
+          client.send(msg);
+        }
+      }
+    }
+  });
 });
 
 // Helper function to send data to ALL connected clients
