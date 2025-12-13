@@ -1,0 +1,103 @@
+const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+
+// --- CONFIGURATION ---
+const PORT = process.env.PORT || 8080;
+
+// --- SETUP SERVERS ---
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// --- MIDDLEWARE ---
+app.use(cors()); // Allows your GitHub Pages site to talk to this backend
+app.use(bodyParser.json());
+
+// --- STATE ---
+// We keep track of what's playing so new users hear it immediately upon joining
+let currentState = {
+    action: 'stop',
+    url: null,
+    text: null
+};
+
+// --- REST API (For Minecraft Plugin to call) ---
+
+// 1. Play Audio
+app.post('/play', (req, res) => {
+    const { url, text } = req.body;
+
+    if (!url) {
+        return res.status(400).json({ error: "Missing 'url' field" });
+    }
+
+    // Update State
+    currentState = {
+        action: 'play',
+        url: url,
+        text: text || "Unknown Track"
+    };
+
+    // Broadcast to all connected websites
+    broadcast(currentState);
+
+    console.log(`[CMD] Playing: ${text} (${url})`);
+    res.json({ success: true, message: "Broadcast sent" });
+});
+
+// 2. Stop Audio
+app.post('/stop', (req, res) => {
+    // Update State
+    currentState = {
+        action: 'stop',
+        url: null,
+        text: null
+    };
+
+    // Broadcast
+    broadcast(currentState);
+
+    console.log(`[CMD] Audio Stopped`);
+    res.json({ success: true, message: "Stop command sent" });
+});
+
+// 3. Status Check
+app.get('/', (req, res) => {
+    res.send(`Sequence SMP Audio Server is running. Connected clients: ${wss.clients.size}`);
+});
+
+// --- WEBSOCKET LOGIC (For Website Clients) ---
+
+wss.on('connection', (ws) => {
+    console.log('[WS] New client connected');
+
+    // 1. Immediately send the current song to the new user
+    // This ensures they don't have to wait for the next song to start
+    if (currentState.action === 'play') {
+        ws.send(JSON.stringify(currentState));
+    }
+
+    ws.on('close', () => {
+        console.log('[WS] Client disconnected');
+    });
+});
+
+// Helper function to send data to ALL connected clients
+function broadcast(data) {
+    wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(data));
+        }
+    });
+}
+
+// --- START SERVER ---
+server.listen(PORT, () => {
+    console.log(`==========================================`);
+    console.log(`🔊 AUDIO BACKEND RUNNING ON PORT ${PORT}`);
+    console.log(`🌐 WebSocket Endpoint: ws://localhost:${PORT}`);
+    console.log(`==========================================`);
+});
