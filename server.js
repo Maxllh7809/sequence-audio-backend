@@ -1,6 +1,10 @@
-import fs from "fs";
+const fs = require("fs");
 
-const SONGS = JSON.parse(fs.readFileSync("./songs.json", "utf8"));
+const path = require("path");
+
+const SONGS = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "songs.json"), "utf8")
+);
 
 function norm(s) {
   return String(s || "").toLowerCase().trim();
