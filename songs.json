@@ -1,11 +1,18 @@
 {
-  "nca": {
+  "not cute anymore": {
     "url": "https://github.com/Maxllh7809/sequence-radio-audio/releases/download/music/blinding_lights.mp3",
     "title": "Not Cute Anymore"
   },
+  "river flows in you": {
+    "url": "https://github.com/Maxllh7809/sequence-radio-audio/releases/download/music/RFIY.mp3",
+    "title": "River Flows In You"
+  },
   "smart": {
-    "url": "ADD MP3 URL HERE",
-    "title": "Smart"
+    "url": "https://github.com/Maxllh7809/sequence-radio-audio/releases/download/music/Smart.mp3",
+    "title": "SMART"
+  },
+  "cradles": {
+    "url": "https://github.com/Maxllh7809/sequence-radio-audio/releases/download/music/Cradles.mp3",
+    "title": "Cradles"
   }
 }
-
