@@ -215,11 +215,38 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    if (data.action === "getQueue") {
-      // anyone can request state (optional)
-      broadcastState();
-      return;
+    if (data.action === "queueList") {
+  if (!isAuthorized(data)) return;
+
+  const lines = [];
+
+  if (nowPlaying) {
+    lines.push(`Now: ${nowPlaying.text}`);
+  } else {
+    lines.push("Now: (nothing playing)");
+  }
+
+  if (queue.length === 0) {
+    lines.push("Queue: (empty)");
+  } else {
+    lines.push("Queue:");
+    queue.slice(0, 10).forEach((t, i) => {
+      lines.push(`${i + 1}. ${t.text}`);
+    });
+    if (queue.length > 10) {
+      lines.push(`+${queue.length - 10} more...`);
     }
+  }
+
+  try {
+    socket.send(JSON.stringify({
+      action: "queueList",
+      lines
+    }));
+  } catch {}
+
+  return;
+}
   });
 });
 
