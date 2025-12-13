@@ -91,4 +91,10 @@ To run this on your own computer:
     ```
 4.  Server runs at: `http://localhost:8080` (WebSocket: `ws://localhost:8080`)
 
+## 👥 Credits
+
+*   **Website/Backend Development:** Loh Wei Feng (Max)
+*   **Plugin Development:** Jishnu H Maruthamutu (Hooman)
+*   **Server Owner:** Siqns
+
 &copy; 2025 Sequence SMP
