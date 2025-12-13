@@ -3,8 +3,8 @@
 This is the backend Node.js server for the **Sequence SMP Website**. It acts as a real-time bridge between the Minecraft Server (or console) and the players' web browsers.
 
 [![Frontend](https://img.shields.io/badge/GitHub-Frontend_Website_Repo-blue?style=for-the-badge&logo=github)](https://github.com/Maxllh7809/Sequence-SMP-Site)
-![NodeJS](https://img.shields.io/badge/node.js-6DA55F?style=for-the-badge&logo=node.js&logoColor=white)
-![Express.js](https://img.shields.io/badge/express.js-%23404d59.svg?style=for-the-badge&logo=express&logoColor=%2361DAFB)
+[![Minecraft Plugin](https://img.shields.io/badge/GitHub-Radio_Plugin_Repo-blue?style=for-the-badge&logo=github)](https://github.com/Maxllh7809/sequence-radio-audio)
+![NodeJS](https://img.shields.io/badge/node.js-6DA55F?style=for-the-badge&logo=openjdk&logoColor=white)
 
 ## 🚀 How it Works
 
