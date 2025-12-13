@@ -1,3 +1,15 @@
+import fs from "fs";
+
+const SONGS = JSON.parse(fs.readFileSync("./songs.json", "utf8"));
+
+function norm(s) {
+  return String(s || "").toLowerCase().trim();
+}
+
+function resolveSong(query) {
+  return SONGS[norm(query)] || null;
+}
+
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -81,28 +93,53 @@ wss.on("connection", (socket) => {
     }
 
     // allow plugin-triggered playback
-    if (data.action === "play" && typeof data.url === "string") {
-      const msg = JSON.stringify({
-        action: "play",
-        url: data.url,
-        text: typeof data.text === "string" ? data.text : "Now playing"
-      });
+    if (data.action === "play") {
+  let track = null;
 
+  // Case 1: plugin sent a direct URL
+  if (typeof data.url === "string" && data.url.startsWith("http")) {
+    track = {
+      url: data.url,
+      text: data.text || "Now playing"
+    };
+  }
+
+  // Case 2: plugin sent a song name
+  else if (typeof data.query === "string") {
+    const found = resolveSong(data.query);
+    if (!found) {
+      // optional: tell listeners song not found
       for (const client of wss.clients) {
         if (client.readyState === 1) {
-          client.send(msg);
+          client.send(JSON.stringify({
+            action: "error",
+            text: `Song not found: ${data.query}`
+          }));
         }
       }
+      return;
     }
 
-    if (data.action === "stop") {
-      const msg = JSON.stringify({ action: "stop" });
-      for (const client of wss.clients) {
-        if (client.readyState === 1) {
-          client.send(msg);
-        }
-      }
+    track = {
+      url: found.url,
+      text: found.title
+    };
+  }
+
+  if (!track) return;
+
+  const msg = JSON.stringify({
+    action: "play",
+    url: track.url,
+    text: track.text
+  });
+
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      client.send(msg);
     }
+  }
+}
   });
 });
 
