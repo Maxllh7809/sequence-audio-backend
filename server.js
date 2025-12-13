@@ -9,6 +9,7 @@ const cors = require("cors");
 
 // --- CONFIGURATION ---
 const PORT = process.env.PORT || 8080;
+const RADIO_KEY = process.env.RADIO_KEY || "";
 
 // --- LOAD SONG LIBRARY (SAFE) ---
 let SONGS = {};
@@ -39,40 +40,49 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // --- STATE ---
-let currentState = {
-  action: "stop",
-  url: null,
-  text: null
-};
+let currentState = { action: "stop", url: null, text: null };
+let nowPlaying = null; // { url, text }
+let queue = [];        // array of { url, text }
 
-// --- BROADCAST HELPER ---
+// --- BROADCAST HELPERS ---
 function broadcast(obj) {
   const msg = JSON.stringify(obj);
   for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
-    }
+    if (client.readyState === WebSocket.OPEN) client.send(msg);
   }
 }
 
-// --- CORE: BUILD PLAY STATE FROM (url/query/text) ---
-function buildPlayState({ url, query, text }) {
+function broadcastState() {
+  broadcast(currentState);
+  broadcast({
+    action: "queue",
+    nowPlaying,
+    queue: queue.map(t => ({ text: t.text }))
+  });
+}
+
+// --- AUTH ---
+function isAuthorized(data) {
+  if (!RADIO_KEY) return true; // if you forgot to set it, don't brick yourself
+  return data && data.key && data.key === RADIO_KEY;
+}
+
+// --- RESOLVE INPUT -> TRACK ---
+function buildTrack({ url, query, text }) {
   // Direct URL
   if (typeof url === "string" && url.startsWith("http")) {
     return {
-      action: "play",
       url,
       text: typeof text === "string" && text.trim() ? text : "Now playing"
     };
   }
 
-  // Song key / query
+  // Library key / query
   if (typeof query === "string" && query.trim()) {
     const found = resolveSong(query);
     if (!found) return null;
 
     return {
-      action: "play",
       url: found.url,
       text: found.title || (typeof text === "string" ? text : "Now playing")
     };
@@ -81,27 +91,66 @@ function buildPlayState({ url, query, text }) {
   return null;
 }
 
+// --- QUEUE ENGINE ---
+function startTrack(track) {
+  nowPlaying = track;
+  currentState = { action: "play", url: track.url, text: track.text };
+  broadcastState();
+  console.log(`[PLAY] ${track.text} (${track.url})`);
+}
+
+function nextTrack() {
+  if (queue.length === 0) {
+    nowPlaying = null;
+    currentState = { action: "stop", url: null, text: null };
+    broadcastState();
+    console.log(`[QUEUE] empty -> stop`);
+    return;
+  }
+  const track = queue.shift();
+  startTrack(track);
+}
+
+function enqueueOrPlay(track) {
+  if (!nowPlaying) {
+    startTrack(track);
+  } else {
+    queue.push(track);
+    broadcastState();
+    console.log(`[QUEUE] + ${track.text}`);
+  }
+}
+
 // --- REST API (OPTIONAL) ---
 app.post("/play", (req, res) => {
-  const { url, query, text } = req.body || {};
-  const next = buildPlayState({ url, query, text });
+  const { url, query, text, key } = req.body || {};
+  if (!isAuthorized({ key })) return res.status(403).json({ error: "unauthorized" });
 
-  if (!next) {
-    return res.status(400).json({ error: "Missing/invalid 'url' or unknown 'query'." });
-  }
+  const track = buildTrack({ url, query, text });
+  if (!track) return res.status(400).json({ error: "invalid url/query" });
 
-  currentState = next;
-  broadcast(currentState);
-
-  console.log(`[REST] play -> ${currentState.text} (${currentState.url})`);
-  res.json({ success: true, state: currentState });
+  enqueueOrPlay(track);
+  res.json({ success: true });
 });
 
 app.post("/stop", (req, res) => {
-  currentState = { action: "stop", url: null, text: null };
-  broadcast(currentState);
+  const { key } = req.body || {};
+  if (!isAuthorized({ key })) return res.status(403).json({ error: "unauthorized" });
 
-  console.log(`[REST] stop`);
+  nowPlaying = null;
+  queue = [];
+  currentState = { action: "stop", url: null, text: null };
+  broadcastState();
+  console.log(`[STOP] cleared`);
+  res.json({ success: true });
+});
+
+app.post("/skip", (req, res) => {
+  const { key } = req.body || {};
+  if (!isAuthorized({ key })) return res.status(403).json({ error: "unauthorized" });
+
+  console.log(`[SKIP]`);
+  nextTrack();
   res.json({ success: true });
 });
 
@@ -111,50 +160,64 @@ app.get("/", (req, res) => {
 
 // --- WEBSOCKET LOGIC (WEBSITE + PLUGIN) ---
 wss.on("connection", (socket) => {
-  // Send current state immediately so new listeners sync
+  // sync state to new clients
+  try { socket.send(JSON.stringify(currentState)); } catch {}
   try {
-    socket.send(JSON.stringify(currentState));
+    socket.send(JSON.stringify({
+      action: "queue",
+      nowPlaying,
+      queue: queue.map(t => ({ text: t.text }))
+    }));
   } catch {}
 
   socket.on("message", (raw) => {
     let data;
-    try {
-      data = JSON.parse(raw.toString());
-    } catch {
+    try { data = JSON.parse(raw.toString()); } catch { return; }
+
+    // website tells us a track ended (no auth needed)
+    if (data.action === "ended") {
+      if (nowPlaying) {
+        console.log(`[ENDED] -> next`);
+        nextTrack();
+      }
       return;
     }
 
-    // Play (url or query)
+    // control actions require auth
     if (data.action === "play") {
-      const next = buildPlayState({
-        url: data.url,
-        query: data.query,
-        text: data.text
-      });
+      if (!isAuthorized(data)) return;
 
-      if (!next) {
-        // optional error broadcast
-        const msg = JSON.stringify({
-          action: "error",
-          text: data.query ? `Song not found: ${data.query}` : "Invalid play payload"
-        });
-        for (const client of wss.clients) {
-          if (client.readyState === WebSocket.OPEN) client.send(msg);
-        }
+      const track = buildTrack({ url: data.url, query: data.query, text: data.text });
+      if (!track) {
+        broadcast({ action: "error", text: data.query ? `Song not found: ${data.query}` : "Invalid play payload" });
         return;
       }
 
-      currentState = next;
-      broadcast(currentState);
-      console.log(`[WS] play -> ${currentState.text} (${currentState.url})`);
+      enqueueOrPlay(track);
       return;
     }
 
-    // Stop
     if (data.action === "stop") {
+      if (!isAuthorized(data)) return;
+
+      nowPlaying = null;
+      queue = [];
       currentState = { action: "stop", url: null, text: null };
-      broadcast(currentState);
-      console.log(`[WS] stop`);
+      broadcastState();
+      console.log(`[STOP] cleared`);
+      return;
+    }
+
+    if (data.action === "skip") {
+      if (!isAuthorized(data)) return;
+      console.log(`[SKIP]`);
+      nextTrack();
+      return;
+    }
+
+    if (data.action === "getQueue") {
+      // anyone can request state (optional)
+      broadcastState();
       return;
     }
   });
