@@ -174,14 +174,18 @@ wss.on("connection", (socket) => {
     let data;
     try { data = JSON.parse(raw.toString()); } catch { return; }
 
-    // website tells us a track ended (no auth needed)
-    if (data.action === "ended") {
-      if (nowPlaying) {
-        console.log(`[ENDED] -> next`);
-        nextTrack();
-      }
-      return;
-    }
+// website tells us a track ended (no auth needed)
+if (data.action === "ended") {
+  // CRITICAL FIX: Only skip if the client explicitly says WHICH song ended.
+  // This prevents multiple clients from skipping the same song multiple times.
+  if (nowPlaying && data.url === nowPlaying.url) {
+    console.log(`[ENDED] Track finished: ${data.text} -> playing next`);
+    nextTrack();
+  } else {
+    console.log(`[ENDED] Ignored duplicate or old signal.`);
+  }
+  return;
+}
 
     // control actions require auth
     if (data.action === "play") {
