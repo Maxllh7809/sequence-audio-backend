@@ -43,9 +43,10 @@ app.use(bodyParser.json());
 app.use(express.static(__dirname));
 
 // --- STATE ---
-let currentState = { action: "stop", url: null, text: null };
-let nowPlaying = null; // { url, text }
-let queue = [];        // array of { url, text }
+// Now includes 'requester' to track who asked for the song
+let currentState = { action: "stop", url: null, text: null, requester: null };
+let nowPlaying = null; // { url, text, requester }
+let queue = [];        // array of { url, text, requester }
 
 // --- BROADCAST HELPERS ---
 function broadcast(obj) {
@@ -60,7 +61,7 @@ function broadcastState() {
   broadcast({
     action: "queue",
     nowPlaying,
-    queue: queue.map(t => ({ text: t.text }))
+    queue: queue.map(t => ({ text: t.text, requester: t.requester }))
   });
 }
 
@@ -71,24 +72,35 @@ function isAuthorized(data) {
 }
 
 // --- RESOLVE INPUT -> TRACK ---
-function buildTrack({ url, query, text }) {
-  // Direct URL
+function buildTrack({ url, query, text, requester }) {
+  // Default to "Server" if no name provided
+  const reqBy = requester || "Server";
+
+  // 1. Direct Link (starts with http)
   if (typeof url === "string" && url.startsWith("http")) {
     return {
       url,
-      text: typeof text === "string" && text.trim() ? text : "Now playing"
+      text: typeof text === "string" && text.trim() ? text : "Now playing",
+      requester: reqBy
     };
   }
 
-  // Library key / query
-  if (typeof query === "string" && query.trim()) {
-    const found = resolveSong(query);
-    if (!found) return null;
+  // 2. SMART CHECK: If 'url' is just a name (like "cradles"), treat it as a query
+  let search = query;
+  if (!search && typeof url === "string" && url.trim()) {
+     search = url;
+  }
 
-    return {
-      url: found.url,
-      text: found.title || (typeof text === "string" ? text : "Now playing")
-    };
+  // 3. Library Lookup (songs.json)
+  if (typeof search === "string" && search.trim()) {
+    const found = resolveSong(search);
+    if (found) {
+       return {
+         url: found.url,
+         text: found.title || (typeof text === "string" ? text : "Now playing"),
+         requester: reqBy
+       };
+    }
   }
 
   return null;
@@ -97,15 +109,20 @@ function buildTrack({ url, query, text }) {
 // --- QUEUE ENGINE ---
 function startTrack(track) {
   nowPlaying = track;
-  currentState = { action: "play", url: track.url, text: track.text };
+  currentState = { 
+    action: "play", 
+    url: track.url, 
+    text: track.text,
+    requester: track.requester 
+  };
   broadcastState();
-  console.log(`[PLAY] ${track.text} (${track.url})`);
+  console.log(`[PLAY] ${track.text} (Req: ${track.requester})`);
 }
 
 function nextTrack() {
   if (queue.length === 0) {
     nowPlaying = null;
-    currentState = { action: "stop", url: null, text: null };
+    currentState = { action: "stop", url: null, text: null, requester: null };
     broadcastState();
     console.log(`[QUEUE] empty -> stop`);
     return;
@@ -126,10 +143,12 @@ function enqueueOrPlay(track) {
 
 // --- REST API ---
 app.post("/play", (req, res) => {
-  const { url, query, text, key } = req.body || {};
+  // Extract requester from the incoming JSON
+  const { url, query, text, key, requester } = req.body || {};
+  
   if (!isAuthorized({ key })) return res.status(403).json({ error: "unauthorized" });
 
-  const track = buildTrack({ url, query, text });
+  const track = buildTrack({ url, query, text, requester });
   if (!track) return res.status(400).json({ error: "invalid url/query" });
 
   enqueueOrPlay(track);
@@ -142,7 +161,7 @@ app.post("/stop", (req, res) => {
 
   nowPlaying = null;
   queue = [];
-  currentState = { action: "stop", url: null, text: null };
+  currentState = { action: "stop", url: null, text: null, requester: null };
   broadcastState();
   console.log(`[STOP] cleared`);
   res.json({ success: true });
@@ -184,7 +203,7 @@ wss.on("connection", (socket) => {
         console.log(`[ENDED] Track finished: ${nowPlaying.text} -> playing next`);
         nextTrack();
       } else {
-        // Ignored: This happens if multiple users send "ended" at the same time
+        // Ignored to prevent double-skips
       }
       return;
     }
@@ -192,7 +211,12 @@ wss.on("connection", (socket) => {
     // --- CONTROL ACTIONS (Auth Required) ---
     if (data.action === "play") {
       if (!isAuthorized(data)) return;
-      const track = buildTrack({ url: data.url, query: data.query, text: data.text });
+      const track = buildTrack({ 
+          url: data.url, 
+          query: data.query, 
+          text: data.text, 
+          requester: data.requester // Support requester via WS too
+      });
       if (!track) {
         broadcast({ action: "error", text: "Song not found / Invalid Payload" });
         return;
@@ -205,7 +229,7 @@ wss.on("connection", (socket) => {
       if (!isAuthorized(data)) return;
       nowPlaying = null;
       queue = [];
-      currentState = { action: "stop", url: null, text: null };
+      currentState = { action: "stop", url: null, text: null, requester: null };
       broadcastState();
       return;
     }
@@ -218,7 +242,7 @@ wss.on("connection", (socket) => {
 
     if (data.action === "queueList") {
       if (!isAuthorized(data)) return;
-      // Logic for retrieving queue list (same as before)
+      // Logic for retrieving queue list could go here
       return;
     }
   });
